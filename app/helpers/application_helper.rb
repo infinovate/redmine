@@ -58,9 +58,29 @@ module ApplicationHelper
     end
   end
 
+  # Displays a link to +issue+ with its subject.
+  # Examples:
+  # 
+  #   link_to_issue(issue)                        # => Defect #6: This is the subject
+  #   link_to_issue(issue, :truncate => 6)        # => Defect #6: This i...
+  #   link_to_issue(issue, :subject => false)     # => Defect #6
+  #
   def link_to_issue(issue, options={})
-    options[:class] ||= issue.css_classes
-    link_to "#{issue.tracker.name} ##{issue.id}", {:controller => "issues", :action => "show", :id => issue}, options
+    title = nil
+    subject = nil
+    if options[:subject] == false
+      title = truncate(issue.subject, :length => 60)
+    else
+      subject = issue.subject
+      if options[:truncate]
+        subject = truncate(subject, :length => options[:truncate])
+      end
+    end
+    s = link_to "#{issue.tracker} ##{issue.id}", {:controller => "issues", :action => "show", :id => issue}, 
+                                                 :class => issue.css_classes,
+                                                 :title => title
+    s << ": #{h subject}" if subject
+    s
   end
 
   # Generates a link to an attachment.
@@ -480,11 +500,10 @@ module ApplicationHelper
           oid = oid.to_i
           case prefix
           when nil
-            if issue = Issue.find_by_id(oid, :include => [:project, :status], :conditions => Project.visible_by(User.current))
+            if issue = Issue.visible.find_by_id(oid, :include => :status)
               link = link_to("##{oid}", {:only_path => only_path, :controller => 'issues', :action => 'show', :id => oid},
-                                        :class => (issue.closed? ? 'issue closed' : 'issue'),
+                                        :class => issue.css_classes,
                                         :title => "#{truncate(issue.subject, :length => 100)} (#{issue.status.name})")
-              link = content_tag('del', link) if issue.closed?
             end
           when 'document'
             if document = Document.find_by_id(oid, :include => [:project], :conditions => Project.visible_by(User.current))

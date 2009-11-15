@@ -334,6 +334,7 @@ fr:
   setting_openid: "Autoriser l'authentification et l'enregistrement OpenID"
   setting_password_min_length: Longueur minimum des mots de passe
   setting_new_project_user_role_id: Rôle donné à un utilisateur non-administrateur qui crée un projet
+  setting_default_projects_modules: Modules activés par défaut pour les nouveaux projets
   
   permission_add_project: Créer un projet
   permission_edit_project: Modifier le projet
@@ -745,6 +746,7 @@ fr:
   button_list: Lister
   button_view: Voir
   button_move: Déplacer
+  button_move_and_follow: Déplacer et suivre
   button_back: Retour
   button_cancel: Annuler
   button_activate: Activer
