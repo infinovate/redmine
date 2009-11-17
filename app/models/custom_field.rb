@@ -71,6 +71,14 @@ class CustomField < ActiveRecord::Base
           " WHERE cv_sort.customized_type='#{self.class.customized_class.name}'" +
           " AND cv_sort.customized_id=#{self.class.customized_class.table_name}.id" +
           " AND cv_sort.custom_field_id=#{id} LIMIT 1), '')"
+      when 'int','float'
+        # Make the database cast values into numeric
+        # Postgresql will raise an error if a value can not be casted!
+        # CustomValue validations should ensure that it doesn't occur
+        "(SELECT CAST(cv_sort.value AS decimal(60,3)) FROM #{CustomValue.table_name} cv_sort" +
+          " WHERE cv_sort.customized_type='#{self.class.customized_class.name}'" +
+          " AND cv_sort.customized_id=#{self.class.customized_class.table_name}.id" +
+          " AND cv_sort.custom_field_id=#{id} AND cv_sort.value <> '' AND cv_sort.value IS NOT NULL LIMIT 1)"
       else
         nil
     end
