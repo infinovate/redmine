@@ -21,7 +21,6 @@ class ProjectsController < ApplicationController
   menu_item :roadmap, :only => :roadmap
   menu_item :files, :only => [:list_files, :add_file]
   menu_item :settings, :only => :settings
-  menu_item :issues, :only => [:changelog]
   
   before_filter :find_project, :except => [ :index, :list, :add, :copy, :activity ]
   before_filter :find_optional_project, :only => :activity
@@ -74,7 +73,7 @@ class ProjectsController < ApplicationController
       @project.enabled_module_names = Setting.default_projects_modules
     else
       @project.enabled_module_names = params[:enabled_modules]
-      if @project.save
+      if validate_parent_id && @project.save
         @project.set_allowed_parent!(params[:project]['parent_id']) if params[:project].has_key?('parent_id')
         # Add current user as a project member if he is not admin
         unless User.current.admin?
@@ -105,11 +104,17 @@ class ProjectsController < ApplicationController
     else
       @project = Project.new(params[:project])
       @project.enabled_module_names = params[:enabled_modules]
-      if @project.copy(@source_project, :only => params[:only])
+      if validate_parent_id && @project.copy(@source_project, :only => params[:only])
         @project.set_allowed_parent!(params[:project]['parent_id']) if params[:project].has_key?('parent_id')
         flash[:notice] = l(:notice_successful_create)
         redirect_to :controller => 'admin', :action => 'projects'
-      end		
+      elsif !@project.new_record?
+        # Project was created
+        # But some objects were not copied due to validation failures
+        # (eg. issues from disabled trackers)
+        # TODO: inform about that
+        redirect_to :controller => 'admin', :action => 'projects'
+      end
     end
   rescue ActiveRecord::RecordNotFound
     redirect_to :controller => 'admin', :action => 'projects'
@@ -157,7 +162,7 @@ class ProjectsController < ApplicationController
   def edit
     if request.post?
       @project.attributes = params[:project]
-      if @project.save
+      if validate_parent_id && @project.save
         @project.set_allowed_parent!(params[:project]['parent_id']) if params[:project].has_key?('parent_id')
         flash[:notice] = l(:notice_successful_update)
         redirect_to :action => 'settings', :id => @project
@@ -302,36 +307,10 @@ class ProjectsController < ApplicationController
     @containers += @project.versions.find(:all, :include => :attachments, :order => sort_clause).sort.reverse
     render :layout => !request.xhr?
   end
-  
-  # Show changelog for @project
-  def changelog
-    @trackers = @project.trackers.find(:all, :conditions => ["is_in_chlog=?", true], :order => 'position')
-    retrieve_selected_tracker_ids(@trackers)
-    @with_subprojects = params[:with_subprojects].nil? ? Setting.display_subprojects_issues? : (params[:with_subprojects] == '1')
-    project_ids = @with_subprojects ? @project.self_and_descendants.collect(&:id) : [@project.id]
-    
-    @versions = @project.shared_versions.sort
-    
-    @issues_by_version = {}
-    unless @selected_tracker_ids.empty?
-      @versions.each do |version|
-        conditions = {:tracker_id => @selected_tracker_ids, "#{IssueStatus.table_name}.is_closed" => true}
-        if !@project.versions.include?(version)
-          conditions.merge!(:project_id => project_ids)
-        end
-        issues = version.fixed_issues.visible.find(:all,
-                                                   :include => [:status, :tracker, :priority],
-                                                   :conditions => conditions,
-                                                   :order => "#{Tracker.table_name}.position, #{Issue.table_name}.id")
-        @issues_by_version[version] = issues
-      end
-    end
-    @versions.reject! {|version| !project_ids.include?(version.project_id) && @issues_by_version[version].empty?}
-  end
 
   def roadmap
-    @trackers = @project.trackers.find(:all, :conditions => ["is_in_roadmap=?", true], :order => 'position')
-    retrieve_selected_tracker_ids(@trackers)
+    @trackers = @project.trackers.find(:all, :order => 'position')
+    retrieve_selected_tracker_ids(@trackers, @trackers.select {|t| t.is_in_roadmap?})
     @with_subprojects = params[:with_subprojects].nil? ? Setting.display_subprojects_issues? : (params[:with_subprojects] == '1')
     project_ids = @with_subprojects ? @project.self_and_descendants.collect(&:id) : [@project.id]
     
@@ -346,9 +325,9 @@ class ProjectsController < ApplicationController
           conditions.merge!(:project_id => project_ids)
         end
         issues = version.fixed_issues.visible.find(:all,
-                                                   :include => [:status, :tracker, :priority],
+                                                   :include => [:project, :status, :tracker, :priority],
                                                    :conditions => conditions,
-                                                   :order => "#{Tracker.table_name}.position, #{Issue.table_name}.id")
+                                                   :order => "#{Project.table_name}.lft, #{Tracker.table_name}.position, #{Issue.table_name}.id")
         @issues_by_version[version] = issues
       end
     end
@@ -415,11 +394,26 @@ private
     render_404
   end
 
-  def retrieve_selected_tracker_ids(selectable_trackers)
+  def retrieve_selected_tracker_ids(selectable_trackers, default_trackers=nil)
     if ids = params[:tracker_ids]
       @selected_tracker_ids = (ids.is_a? Array) ? ids.collect { |id| id.to_i.to_s } : ids.split('/').collect { |id| id.to_i.to_s }
     else
-      @selected_tracker_ids = selectable_trackers.collect {|t| t.id.to_s }
+      @selected_tracker_ids = (default_trackers || selectable_trackers).collect {|t| t.id.to_s }
     end
+  end
+  
+  # Validates parent_id param according to user's permissions
+  # TODO: move it to Project model in a validation that depends on User.current
+  def validate_parent_id
+    return true if User.current.admin?
+    parent_id = params[:project] && params[:project][:parent_id]
+    if parent_id || @project.new_record?
+      parent = parent_id.blank? ? nil : Project.find_by_id(parent_id.to_i)
+      unless @project.allowed_parents.include?(parent)
+        @project.errors.add :parent_id, :invalid
+        return false
+      end
+    end
+    true
   end
 end

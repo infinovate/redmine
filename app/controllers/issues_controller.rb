@@ -131,7 +131,7 @@ class IssuesController < ApplicationController
       return
     end
     if params[:issue].is_a?(Hash)
-      @issue.attributes = params[:issue]
+      @issue.safe_attributes = params[:issue]
       @issue.watcher_user_ids = params[:issue]['watcher_user_ids'] if User.current.allowed_to?(:add_issue_watchers, @project)
     end
     @issue.author = User.current
@@ -150,6 +150,7 @@ class IssuesController < ApplicationController
       requested_status = IssueStatus.find_by_id(params[:issue][:status_id])
       # Check that the user is allowed to apply the requested status
       @issue.status = (@allowed_statuses.include? requested_status) ? requested_status : default_status
+      call_hook(:controller_issues_new_before_save, { :params => params, :issue => @issue })
       if @issue.save
         attach_files(@issue, params[:attachments])
         flash[:notice] = l(:notice_successful_create)
@@ -180,28 +181,28 @@ class IssuesController < ApplicationController
       attrs = params[:issue].dup
       attrs.delete_if {|k,v| !UPDATABLE_ATTRS_ON_TRANSITION.include?(k) } unless @edit_allowed
       attrs.delete(:status_id) unless @allowed_statuses.detect {|s| s.id.to_s == attrs[:status_id].to_s}
-      @issue.attributes = attrs
+      @issue.safe_attributes = attrs
     end
 
     if request.post?
       @time_entry = TimeEntry.new(:project => @project, :issue => @issue, :user => User.current, :spent_on => Date.today)
       @time_entry.attributes = params[:time_entry]
-      attachments = attach_files(@issue, params[:attachments])
-      attachments.each {|a| journal.details << JournalDetail.new(:property => 'attachment', :prop_key => a.id, :value => a.filename)}
-      
-      call_hook(:controller_issues_edit_before_save, { :params => params, :issue => @issue, :time_entry => @time_entry, :journal => journal})
-
-      if (@time_entry.hours.nil? || @time_entry.valid?) && @issue.save
-        # Log spend time
-        if User.current.allowed_to?(:log_time, @project)
-          @time_entry.save
+      if (@time_entry.hours.nil? || @time_entry.valid?) && @issue.valid?
+        attachments = attach_files(@issue, params[:attachments])
+        attachments.each {|a| journal.details << JournalDetail.new(:property => 'attachment', :prop_key => a.id, :value => a.filename)}
+        call_hook(:controller_issues_edit_before_save, { :params => params, :issue => @issue, :time_entry => @time_entry, :journal => journal})
+        if @issue.save
+          # Log spend time
+          if User.current.allowed_to?(:log_time, @project)
+            @time_entry.save
+          end
+          if !journal.new_record?
+            # Only send notification if something was actually changed
+            flash[:notice] = l(:notice_successful_update)
+          end
+          call_hook(:controller_issues_edit_after_save, { :params => params, :issue => @issue, :time_entry => @time_entry, :journal => journal})
+          redirect_to(params[:back_to] || {:action => 'show', :id => @issue})
         end
-        if !journal.new_record?
-          # Only send notification if something was actually changed
-          flash[:notice] = l(:notice_successful_update)
-        end
-        call_hook(:controller_issues_edit_after_save, { :params => params, :issue => @issue, :time_entry => @time_entry, :journal => journal})
-        redirect_to(params[:back_to] || {:action => 'show', :id => @issue})
       end
     end
   rescue ActiveRecord::StaleObjectError
@@ -272,7 +273,7 @@ class IssuesController < ApplicationController
       return
     end
     @available_statuses = Workflow.available_statuses(@project)
-    @custom_fields = @project.issue_custom_fields.select {|f| f.field_format == 'list'}
+    @custom_fields = @project.all_issue_custom_fields
   end
 
   def move
@@ -475,7 +476,8 @@ private
       @project = projects.first
     else
       # TODO: let users bulk edit/move/destroy issues from different projects
-      render_error 'Can not bulk edit/move/destroy issues from different projects' and return false
+      render_error 'Can not bulk edit/move/destroy issues from different projects'
+      return false
     end
   rescue ActiveRecord::RecordNotFound
     render_404
