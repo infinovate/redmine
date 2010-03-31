@@ -229,10 +229,13 @@ class IssuesController < ApplicationController
       user = @issue.author
       text = @issue.description
     end
-    content = "#{ll(Setting.default_language, :text_user_wrote, user)}\\n> "
-    content << text.to_s.strip.gsub(%r{<pre>((.|\s)*?)</pre>}m, '[...]').gsub('"', '\"').gsub(/(\r?\n|\r\n?)/, "\\n> ") + "\\n\\n"
+    # Replaces pre blocks with [...]
+    text = text.to_s.strip.gsub(%r{<pre>((.|\s)*?)</pre>}m, '[...]')
+    content = "#{ll(Setting.default_language, :text_user_wrote, user)}\n> "
+    content << text.gsub(/(\r?\n|\r\n?)/, "\n> ") + "\n\n"
+      
     render(:update) { |page|
-      page.<< "$('notes').value = \"#{content}\";"
+      page.<< "$('notes').value = \"#{escape_javascript content}\";"
       page.show 'update'
       page << "Form.Element.focus('notes');"
       page << "Element.scrollTo('update');"
@@ -450,9 +453,17 @@ class IssuesController < ApplicationController
   
   def preview
     @issue = @project.issues.find_by_id(params[:id]) unless params[:id].blank?
-    @attachements = @issue.attachments if @issue
-    @text = params[:notes] || (params[:issue] ? params[:issue][:description] : nil)
-    render :partial => 'common/preview'
+    if @issue
+      @attachements = @issue.attachments
+      @description = params[:issue] && params[:issue][:description]
+      if @description && @description.gsub(/(\r?\n|\n\r?)/, "\n") == @issue.description.to_s.gsub(/(\r?\n|\n\r?)/, "\n")
+        @description = nil
+      end
+      @notes = params[:notes]
+    else
+      @description = (params[:issue] ? params[:issue][:description] : nil)
+    end
+    render :layout => false
   end
   
   def auto_complete
