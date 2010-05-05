@@ -386,6 +386,16 @@ class IssueTest < ActiveSupport::TestCase
     assert_equal 7, issue.fixed_version_id
   end
   
+  def test_move_to_another_project_with_disabled_tracker
+    issue = Issue.find(1)
+    target = Project.find(2)
+    target.tracker_ids = [3]
+    target.save
+    assert_equal false, issue.move_to(target)
+    issue.reload
+    assert_equal 1, issue.project_id
+  end
+  
   def test_copy_to_the_same_project
     issue = Issue.find(1)
     copy = nil
@@ -587,6 +597,22 @@ class IssueTest < ActiveSupport::TestCase
 
         assert_equal 50, @issue.done_ratio
       end
+    end
+  end
+  
+  context ".allowed_target_projects_on_move" do
+    should "return all active projects for admin users" do
+      User.current = User.find(1)
+      assert_equal Project.active.count, Issue.allowed_target_projects_on_move.size
+    end
+    
+    should "return allowed projects for non admin users" do
+      User.current = User.find(2)
+      Role.non_member.remove_permission! :move_issues
+      assert_equal 3, Issue.allowed_target_projects_on_move.size
+      
+      Role.non_member.add_permission! :move_issues
+      assert_equal Project.active.count, Issue.allowed_target_projects_on_move.size
     end
   end
 end

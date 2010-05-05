@@ -223,10 +223,13 @@ class IssuesController < ApplicationController
       user = @issue.author
       text = @issue.description
     end
-    content = "#{ll(Setting.default_language, :text_user_wrote, user)}\\n> "
-    content << text.to_s.strip.gsub(%r{<pre>((.|\s)*?)</pre>}m, '[...]').gsub('"', '\"').gsub(/(\r?\n|\r\n?)/, "\\n> ") + "\\n\\n"
+    # Replaces pre blocks with [...]
+    text = text.to_s.strip.gsub(%r{<pre>((.|\s)*?)</pre>}m, '[...]')
+    content = "#{ll(Setting.default_language, :text_user_wrote, user)}\n> "
+    content << text.gsub(/(\r?\n|\r\n?)/, "\n> ") + "\n\n"
+      
     render(:update) { |page|
-      page.<< "$('notes').value = \"#{content}\";"
+      page.<< "$('notes').value = \"#{escape_javascript content}\";"
       page.show 'update'
       page << "Form.Element.focus('notes');"
       page << "Element.scrollTo('update');"
@@ -280,14 +283,7 @@ class IssuesController < ApplicationController
 
   def move
     @copy = params[:copy_options] && params[:copy_options][:copy]
-    @allowed_projects = []
-    # find projects to which the user is allowed to move the issue
-    if User.current.admin?
-      # admin is allowed to move issues to any active (visible) project
-      @allowed_projects = Project.find(:all, :conditions => Project.visible_by(User.current))
-    else
-      User.current.memberships.each {|m| @allowed_projects << m.project if m.roles.detect {|r| r.allowed_to?(:move_issues)}}
-    end
+    @allowed_projects = Issue.allowed_target_projects_on_move
     @target_project = @allowed_projects.detect {|p| p.id.to_s == params[:new_project_id]} if params[:new_project_id]
     @target_project ||= @project    
     @trackers = @target_project.trackers
